@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>GPS Real OSRM + Nominatim</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+
+<style>
+html,body{margin:0;height:100%;background:#000;font-family:system-ui}
+#map{height:100%}
+
+.gps-ui{
+  position:absolute;
+  top:10px;
+  left:50%;
+  transform:translateX(-50%);
+  width:94%;
+  max-width:440px;
+  background:rgba(15,15,15,.95);
+  color:#fff;
+  padding:12px;
+  border-radius:14px;
+  z-index:999;
+}
+
+.gps-ui input{
+  width:100%;
+  background:#111;
+  color:#0f0;
+  border:none;
+  padding:10px;
+  border-radius:10px;
+  margin-bottom:6px;
+}
+
+.status{
+  font-size:12px;
+  color:#aaa;
+  text-align:center;
+}
+</style>
+</head>
+
+<body>
+
+<div class="gps-ui">
+  <input id="origen" value="📍 Localizando…" disabled>
+  <input id="destino" placeholder="🎯 Destino lat,lng">
+  <div class="status" id="status">GPS iniciando…</div>
+</div>
+
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script>
+let map = L.map('map', {zoomControl:false}).setView([0,0],2);
+
+L.tileLayer(
+  'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+  {attribution:'© OSM © CARTO'}
+).addTo(map);
+
+let userMarker, destMarker, routeLine;
+let currentPos = null;
+let destination = null;
+
+// Marker helper
+function mk(color){
+  return L.circleMarker([0,0],{
+    radius:8,
+    color,
+    fillColor:color,
+    fillOpacity:1
+  });
+}
+
+// Reverse geocode con Nominatim
+function reverseGeocode(lat, lon){
+  fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`)
+    .then(r=>r.json())
+    .then(d=>{
+      document.getElementById("origen").value =
+        "📍 " + (d.display_name || `${lat.toFixed(5)}, ${lon.toFixed(5)}`);
+    });
+}
+
+// GPS REAL
+navigator.geolocation.watchPosition(pos=>{
+  currentPos = [pos.coords.latitude, pos.coords.longitude];
+
+  if(!userMarker){
+    userMarker = mk('#00ff00').addTo(map);
+    map.setView(currentPos,16);
+  }
+
+  userMarker.setLatLng(currentPos);
+  reverseGeocode(currentPos[0], currentPos[1]);
+
+  document.getElementById("status").innerText =
+    `GPS activo • Precisión ${Math.round(pos.coords.accuracy)}m`;
+
+  if(destination) calcularRuta();
+
+},{
+  enableHighAccuracy:true,
+  maximumAge:500,
+  timeout:10000
+});
+
+// Destino manual lat,lng
+document.getElementById("destino").addEventListener("change", e=>{
+  const p = e.target.value.split(",");
+  if(p.length!==2) return;
+
+  destination = [parseFloat(p[0]), parseFloat(p[1])];
+  if(isNaN(destination[0])) return;
+
+  if(!destMarker) destMarker = mk('#ff0000').addTo(map);
+  destMarker.setLatLng(destination);
+
+  calcularRuta();
+});
+
+// OSRM routing
+function calcularRuta(){
+  if(!currentPos || !destination) return;
+
+  const url =
+    `https://router.project-osrm.org/route/v1/driving/`+
+    `${currentPos[1]},${currentPos[0]};`+
+    `${destination[1]},${destination[0]}`+
+    `?overview=full&geometries=geojson`;
+
+  fetch(url)
+    .then(r=>r.json())
+    .then(d=>{
+      const coords = d.routes[0].geometry.coordinates
+        .map(c=>[c[1],c[0]]);
+
+      if(routeLine) map.removeLayer(routeLine);
+
+      routeLine = L.polyline(coords,{
+        weight:5,
+        opacity:.9
+      }).addTo(map);
+    });
+}
+</script>
+
+</body>
+</html>
